@@ -1,0 +1,109 @@
+* Initialise Python project
+
+#+BEGIN_SRC bash
+mkdir sample_python_nix_docker; cd sample_python_nix_docker
+echo "flask" > requirements.txt
+cat <<EOF > hello.py
+#!/usr/bin/env python
+
+from flask import Flask
+app = Flask(__name__)
+
+@app.route("/")
+def hello():
+    return "Hello World!"
+
+if __name__ == "__main__":
+    app.run("0.0.0.0")
+EOF
+#+END_SRC
+
+#+BEGIN_SRC python
+cat <<EOF > setup.py
+from pip.req import parse_requirements
+from setuptools import setup
+
+install_reqs = parse_requirements('requirements.txt', session='dev')
+reqs = [str(ir.req) for ir in install_reqs]
+
+setup(
+    name='hello',
+    scripts=['hello.py'],
+    install_requires=reqs,
+)
+EOF
+#+END_SRC
+
+* Initialise Nix
+
+** Generate requirements.nix
+
+#+BEGIN_SRC sh
+nix-shell -p pypi2nix --run "pypi2nix -r ./requirements.txt -V3"
+#+END_SRC
+
+** Create Python environement 
+
+#+BEGIN_SRC sh
+nix-build requirements.nix -A interpreter -o .env
+#+END_SRC
+
+Now, *.env* can be used with pycharm, emacs ...
+
+** Build my app !
+
+#+BEGIN_SRC sh
+cat <<EOF > default.nix
+{ }:
+
+let
+  pkgs = import <nixpkgs> {};
+  python = import ./requirements.nix { inherit pkgs; };
+in python.mkDerivation {
+  name = "hello-1.0.0";
+  src = ./.;
+  buildInputs = [
+    python.packages."Flask"
+  ];
+  propagatedBuildInputs = [
+    python.packages."Flask"
+  ];
+}
+EOF
+#+END_SRC
+
+*./result/bin/hello.py*
+
+* Initialise Docker
+
+#+BEGIN_SRC sh
+cat <<EOF > docker.nix
+with import <nixpkgs> {};
+
+let
+  hello = import ./default.nix {};
+in {
+  helloImage = dockerTools.buildImage {
+    name = "hello";
+    contents = [
+      hello
+    ];
+    config = {
+      EntryPoint = ["hello.py"];
+      ExposedPorts = {
+        "5000/tcp" = {};
+      };
+    };
+  };
+}
+EOF
+#+END_SRC
+
+#+BEGIN_SRC sh
+nix-build docker.nix -o docker-img
+cat docker-img | docker load
+#+END_SRC
+
+#+BEGIN_SRC sh
+docker run -it --rm -p 5000:5000 hello
+#+END_SRC
